@@ -10,7 +10,6 @@ from core.models import StyleSpec, TemplateProfile
 from core.style_extractor import extract
 from core.template_loader import TemplateLoadError, load
 
-
 # ===========================================================================
 # TemplateLoader tests
 # ===========================================================================

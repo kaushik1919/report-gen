@@ -11,7 +11,7 @@ if TYPE_CHECKING:
 class LoadedTemplate:
     """Raw DOCX file loaded into memory. Passed only within the loader pipeline."""
     path: str
-    document: "Document"
+    document: Document
     content_hash: str  # SHA-256 hex of the source file
 
 
