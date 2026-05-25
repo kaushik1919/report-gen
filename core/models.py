@@ -73,12 +73,18 @@ class SectionContent:
     """
     AI-generated content for one section, expressed as typed blocks.
     The LLM produces these blocks as JSON; the assembler renders them.
-    Supported block types:
-        {"type": "paragraph", "text": "..."}
-        {"type": "bullets", "items": ["...", "..."]}
-        {"type": "table", "headers": [...], "rows": [[...]]}
-        {"type": "citation_marker", "key": "smith2020"}
-        {"type": "figure", "caption": "...", "image_ref": "fig1.png"}
+
+    Canonical block types (assembler dispatches on ``type``):
+        {"type": "paragraph",           "text": "..."}
+        {"type": "bullet_list",         "items": ["...", "..."]}
+        {"type": "numbered_list",       "items": ["...", "..."]}
+        {"type": "table",               "headers": [...], "rows": [[...]]}
+        {"type": "heading",             "text": "...", "level": 2}
+        {"type": "figure_placeholder",  "caption": "..."}
+        {"type": "citation_placeholder","key": "smith2020"}
+
+    Legacy alias: ``"bullets"`` is accepted as a synonym for ``"bullet_list"``.
+    Unknown types are logged as a WARNING and skipped by the assembler.
     """
     section_id: str
     title: str
