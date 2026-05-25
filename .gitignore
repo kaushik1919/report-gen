@@ -2,7 +2,7 @@ __pycache__/
 *.py[cod]
 *.pyo
 .env
-.venv
+.venv/
 venv/
 *.egg-info/
 dist/
@@ -10,3 +10,8 @@ build/
 .pytest_cache/
 .ruff_cache/
 workdir/
+temp/
+*.log
+.DS_Store
+CLAUDE.md
+.claude/
