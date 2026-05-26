@@ -6,6 +6,7 @@ Heading Level: $level
 Target Word Count: $target_words
 Instructions: $instructions
 $context_hint
+$citation_keys_hint
 
 Return ONLY a JSON object matching this schema exactly. No markdown. No prose.
 
@@ -15,8 +16,9 @@ Return ONLY a JSON object matching this schema exactly. No markdown. No prose.
   "level": $level,
   "blocks": [
     {"type": "paragraph", "text": "Full paragraph text here — 100 to 200 words, formal register."},
-    {"type": "bullets", "items": ["Concise point one.", "Concise point two.", "Concise point three."]},
-    {"type": "table", "headers": ["Column 1", "Column 2"], "rows": [["value 1", "value 2"]]}
+    {"type": "bullet_list", "items": ["Concise point one.", "Concise point two.", "Concise point three."]},
+    {"type": "table", "headers": ["Column 1", "Column 2"], "rows": [["value 1", "value 2"]]},
+    {"type": "citation_placeholder", "key": "author2020"}
   ],
   "citations": []
 }
@@ -25,7 +27,6 @@ Rules:
 - Use academic tone, third person, formal register throughout
 - Each paragraph block must be 100 to 200 words
 - Do not repeat content already covered in previous sections
-- Leave the citations array empty — do not hallucinate sources
 - Do not use markdown syntax (no **, no ##, no -) inside text fields
-- Use only block types: paragraph, bullets, table
 - Return valid JSON only — no other text before or after
+$citation_rules_hint

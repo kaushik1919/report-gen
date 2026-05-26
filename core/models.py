@@ -6,6 +6,21 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from docx import Document
 
+# ---------------------------------------------------------------------------
+# Block type constants
+# ---------------------------------------------------------------------------
+
+VALID_BLOCK_TYPES: frozenset[str] = frozenset({
+    "paragraph",
+    "bullet_list",
+    "bullets",           # legacy alias for bullet_list
+    "numbered_list",
+    "table",
+    "heading",
+    "figure_placeholder",
+    "citation_placeholder",
+})
+
 
 @dataclass
 class LoadedTemplate:
@@ -66,6 +81,34 @@ class ReportPlan:
     title: str
     author: str
     sections: list[SectionSpec] = field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Bibliography
+# ---------------------------------------------------------------------------
+
+@dataclass
+class CitationEntry:
+    """A single bibliography entry parsed from a BibTeX file."""
+    key: str
+    entry_type: str             # bibtex entry type: article, book, misc, etc.
+    fields: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass
+class BibliographyStore:
+    """Keyed collection of citation entries loaded from a bibliography file."""
+    entries: dict[str, CitationEntry] = field(default_factory=dict)
+    source_path: str = ""
+
+    def keys(self) -> list[str]:
+        return list(self.entries.keys())
+
+    def get(self, key: str) -> CitationEntry | None:
+        return self.entries.get(key)
+
+    def has(self, key: str) -> bool:
+        return key in self.entries
 
 
 @dataclass

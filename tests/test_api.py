@@ -410,3 +410,118 @@ class TestHealthOllama:
 
         assert resp.status_code == 200
         assert resp.json()["selected_model"] is None
+
+
+# ---------------------------------------------------------------------------
+# POST /bibliography/load
+# ---------------------------------------------------------------------------
+
+class TestLoadBibliography:
+    def test_happy_path_returns_citation_keys(self, client, uploads_dir, monkeypatch):
+        monkeypatch.setattr("app.api.UPLOADS_DIR", uploads_dir)
+        from core.models import BibliographyStore, CitationEntry
+        store = BibliographyStore(
+            entries={"smith2020": CitationEntry(key="smith2020", entry_type="article", fields={})}
+        )
+        with patch("app.api.bibliography_loader.load_bibtex", return_value=store):
+            resp = client.post(
+                "/bibliography/load",
+                files={"file": ("refs.bib", b"@article{smith2020,...}", "application/octet-stream")},
+            )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert "citation_keys" in body
+        assert "smith2020" in body["citation_keys"]
+        assert body["entry_count"] == 1
+
+    def test_non_bib_file_rejected(self, client):
+        resp = client.post(
+            "/bibliography/load",
+            files={"file": ("refs.pdf", b"not a bib file", "application/pdf")},
+        )
+        assert resp.status_code == 400
+        assert ".bib" in resp.json()["detail"].lower()
+
+    def test_invalid_bib_returns_400(self, client, uploads_dir, monkeypatch):
+        monkeypatch.setattr("app.api.UPLOADS_DIR", uploads_dir)
+        from core.bibliography_loader import BibliographyLoadError
+        with patch("app.api.bibliography_loader.load_bibtex",
+                   side_effect=BibliographyLoadError("corrupt bib file")):
+            resp = client.post(
+                "/bibliography/load",
+                files={"file": ("refs.bib", b"garbage", "application/octet-stream")},
+            )
+        assert resp.status_code == 400
+        assert "corrupt bib file" in resp.json()["detail"]
+
+    def test_source_filename_in_response(self, client, uploads_dir, monkeypatch):
+        monkeypatch.setattr("app.api.UPLOADS_DIR", uploads_dir)
+        from core.models import BibliographyStore
+        store = BibliographyStore(entries={})
+        with patch("app.api.bibliography_loader.load_bibtex", return_value=store):
+            resp = client.post(
+                "/bibliography/load",
+                files={"file": ("my_refs.bib", b"", "application/octet-stream")},
+            )
+        assert resp.status_code == 200
+        assert resp.json()["source"] == "my_refs.bib"
+
+    def test_empty_bib_returns_empty_keys(self, client, uploads_dir, monkeypatch):
+        monkeypatch.setattr("app.api.UPLOADS_DIR", uploads_dir)
+        from core.models import BibliographyStore
+        with patch("app.api.bibliography_loader.load_bibtex", return_value=BibliographyStore()):
+            resp = client.post(
+                "/bibliography/load",
+                files={"file": ("empty.bib", b"", "application/octet-stream")},
+            )
+        assert resp.status_code == 200
+        assert resp.json()["citation_keys"] == []
+        assert resp.json()["entry_count"] == 0
+
+
+# ---------------------------------------------------------------------------
+# POST /report/content — citation_keys forwarding
+# ---------------------------------------------------------------------------
+
+class TestGenerateContentCitationKeys:
+    def _plan_dict(self) -> dict:
+        return {
+            "title": "Test Report", "author": "Jane",
+            "sections": [
+                {"id": "s1", "title": "Intro", "level": 1,
+                 "target_words": 300, "instructions": "Write intro."},
+            ],
+        }
+
+    def test_citation_keys_forwarded_to_write_section(self, client, mock_section):
+        with patch("app.api.content_generator.write_section", return_value=mock_section) as mock_ws, \
+             patch("app.api.content_generator.summarize_section", return_value=""):
+            client.post("/report/content", json={
+                "plan": self._plan_dict(),
+                "topic": "x",
+                "citation_keys": ["smith2020", "doe2019"],
+            })
+        _, kwargs = mock_ws.call_args
+        assert kwargs.get("citation_keys") == ["smith2020", "doe2019"]
+
+    def test_empty_citation_keys_forwarded_as_none(self, client, mock_section):
+        with patch("app.api.content_generator.write_section", return_value=mock_section) as mock_ws, \
+             patch("app.api.content_generator.summarize_section", return_value=""):
+            client.post("/report/content", json={
+                "plan": self._plan_dict(),
+                "topic": "x",
+                "citation_keys": [],
+            })
+        _, kwargs = mock_ws.call_args
+        assert kwargs.get("citation_keys") is None
+
+    def test_missing_citation_keys_defaults_to_none(self, client, mock_section):
+        with patch("app.api.content_generator.write_section", return_value=mock_section) as mock_ws, \
+             patch("app.api.content_generator.summarize_section", return_value=""):
+            client.post("/report/content", json={
+                "plan": self._plan_dict(),
+                "topic": "x",
+            })
+        _, kwargs = mock_ws.call_args
+        assert kwargs.get("citation_keys") is None

@@ -8,6 +8,7 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+import core.bibliography_loader as bibliography_loader
 import core.content_generator as content_generator
 import core.document_assembler as document_assembler
 import core.exporter as exporter
@@ -17,6 +18,7 @@ import core.outline_planner as outline_planner
 import core.style_extractor as style_extractor
 import core.template_loader as template_loader
 from app.config import DEFAULT_MODEL, OLLAMA_BASE_URL, OUTPUTS_DIR, UPLOADS_DIR
+from core.bibliography_loader import BibliographyLoadError
 from core.content_generator import ContentGeneratorError
 from core.exporter import ExporterError
 from core.models import ReportPlan, SectionContent, SectionSpec
@@ -50,6 +52,7 @@ class ContentRequest(BaseModel):
     plan: dict
     topic: str
     model: str = DEFAULT_MODEL
+    citation_keys: list[str] = []
 
 
 class BuildRequest(BaseModel):
@@ -167,6 +170,7 @@ def generate_content(req: ContentRequest):
                 topic=req.topic,
                 previous_summaries=previous_summaries,
                 model=req.model,
+                citation_keys=req.citation_keys or None,
             )
         except ContentGeneratorError as exc:
             raise HTTPException(status_code=502, detail=str(exc))
@@ -197,6 +201,30 @@ def build_report(req: BuildRequest):
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         filename=out_path.name,
     )
+
+
+@app.post("/bibliography/load")
+async def load_bibliography(file: UploadFile = File(...)):
+    """Upload a .bib file, validate it, and return the parsed citation keys."""
+    if not (file.filename or "").lower().endswith(".bib"):
+        raise HTTPException(status_code=400, detail="Only .bib files are accepted")
+
+    content = await file.read()
+    tmp_path = UPLOADS_DIR / f"{uuid.uuid4()}.bib"
+    tmp_path.write_bytes(content)
+
+    try:
+        store = bibliography_loader.load_bibtex(tmp_path)
+    except BibliographyLoadError as exc:
+        tmp_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    tmp_path.unlink(missing_ok=True)
+    return {
+        "citation_keys": store.keys(),
+        "entry_count": len(store.entries),
+        "source": file.filename or "",
+    }
 
 
 @app.get("/health/ollama")

@@ -2,8 +2,9 @@ import json
 import logging
 from pathlib import Path
 from string import Template
+from typing import Literal
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ValidationError, model_validator
 
 import core.ollama_client as ollama_client
 from app.config import DEFAULT_MODEL
@@ -15,9 +16,20 @@ logger = logging.getLogger(__name__)
 _PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
 _MAX_SUMMARY_CHARS = 600
 
+_VALID_BLOCK_TYPE = Literal[
+    "paragraph",
+    "bullet_list",
+    "bullets",           # legacy alias
+    "numbered_list",
+    "table",
+    "heading",
+    "figure_placeholder",
+    "citation_placeholder",
+]
+
 
 class _BlockModel(BaseModel):
-    type: str
+    type: _VALID_BLOCK_TYPE
     text: str | None = None
     items: list[str] | None = None
     headers: list[str] | None = None
@@ -25,6 +37,12 @@ class _BlockModel(BaseModel):
     caption: str | None = None
     image_ref: str | None = None
     key: str | None = None
+
+    @model_validator(mode="after")
+    def _validate_citation_key(self) -> "_BlockModel":
+        if self.type == "citation_placeholder" and not (self.key or "").strip():
+            raise ValueError("citation_placeholder block must have a non-empty 'key'")
+        return self
 
 
 class _SectionContentModel(BaseModel):
@@ -45,12 +63,13 @@ def write_section(
     topic: str,
     previous_summaries: list[str],
     model: str = DEFAULT_MODEL,
+    citation_keys: list[str] | None = None,
 ) -> SectionContent:
     """Generate structured JSON content for one section via Ollama."""
-    prompt = _build_prompt(section, topic, previous_summaries)
+    prompt = _build_prompt(section, topic, previous_summaries, citation_keys)
     raw = _call_llm(prompt, model)
     try:
-        return _parse_content(raw)
+        content = _parse_content(raw)
     except (json.JSONDecodeError, ValidationError) as exc:
         logger.warning("Section %r attempt 1 failed: %s — retrying", section.id, exc)
         retry_prompt = (
@@ -60,11 +79,15 @@ def write_section(
         )
         raw = _call_llm(retry_prompt, model)
         try:
-            return _parse_content(raw)
+            content = _parse_content(raw)
         except (json.JSONDecodeError, ValidationError) as exc2:
             raise ContentGeneratorError(
                 f"Section {section.id!r} generation failed after retry: {exc2}"
             ) from exc2
+
+    if citation_keys is not None:
+        _warn_invalid_citation_keys(content, citation_keys)
+    return content
 
 
 def summarize_section(content: SectionContent) -> str:
@@ -85,12 +108,30 @@ def _build_prompt(
     section: SectionSpec,
     topic: str,
     previous_summaries: list[str],
+    citation_keys: list[str] | None = None,
 ) -> str:
     template_text = (_PROMPTS_DIR / "section_prompt.txt").read_text(encoding="utf-8")
     context_hint = ""
     if previous_summaries:
         recent = " | ".join(previous_summaries[-3:])
         context_hint = f"Previous sections covered: {recent}"
+
+    if citation_keys:
+        keys_str = ", ".join(citation_keys)
+        citation_keys_hint = f"Available citation keys (use ONLY these): {keys_str}"
+        citation_rules_hint = (
+            "- Only use citation_placeholder blocks for references\n"
+            "- Cite ONLY from the provided keys above — NEVER invent or hallucinate citation keys\n"
+            '- Use the format: {"type": "citation_placeholder", "key": "author2020"}\n'
+            "- Leave the citations array empty"
+        )
+    else:
+        citation_keys_hint = ""
+        citation_rules_hint = (
+            "- Leave the citations array empty — do not hallucinate sources\n"
+            "- Prefer block types: paragraph, bullet_list, table"
+        )
+
     return Template(template_text).safe_substitute(
         topic=topic,
         title=section.title,
@@ -99,7 +140,23 @@ def _build_prompt(
         instructions=section.instructions,
         section_id=section.id,
         context_hint=context_hint,
+        citation_keys_hint=citation_keys_hint,
+        citation_rules_hint=citation_rules_hint,
     )
+
+
+def _warn_invalid_citation_keys(content: SectionContent, valid_keys: list[str]) -> None:
+    """Warn if citation_placeholder blocks use keys not in the provided valid set."""
+    valid_set = set(valid_keys)
+    for block in content.blocks:
+        if block.get("type") == "citation_placeholder":
+            key = block.get("key", "")
+            if key not in valid_set:
+                logger.warning(
+                    "content_generator: citation_placeholder key %r not in provided set "
+                    "— possible hallucination; will surface as unknown during post-processing",
+                    key,
+                )
 
 
 def _call_llm(prompt: str, model: str) -> str:

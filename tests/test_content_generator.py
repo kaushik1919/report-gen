@@ -234,3 +234,111 @@ class TestWriteSectionRetry:
         call_kwargs = MockClient.return_value.chat.call_args.kwargs
         prompt = call_kwargs["messages"][0]["content"]
         assert "Previous sections covered" not in prompt
+
+
+# ---------------------------------------------------------------------------
+# Citation key injection
+# ---------------------------------------------------------------------------
+
+class TestCitationKeyInjection:
+    @patch("core.ollama_client.ollama.Client")
+    def test_citation_keys_appear_in_prompt(self, MockClient):
+        MockClient.return_value.chat.return_value = _chat_mock(VALID_SECTION_JSON)
+        write_section(PLAN, SECTION, "ML", [], citation_keys=["smith2020", "doe2019"])
+        call_kwargs = MockClient.return_value.chat.call_args.kwargs
+        prompt = call_kwargs["messages"][0]["content"]
+        assert "smith2020" in prompt
+        assert "doe2019" in prompt
+
+    @patch("core.ollama_client.ollama.Client")
+    def test_citation_keys_hint_label_in_prompt(self, MockClient):
+        MockClient.return_value.chat.return_value = _chat_mock(VALID_SECTION_JSON)
+        write_section(PLAN, SECTION, "ML", [], citation_keys=["smith2020"])
+        call_kwargs = MockClient.return_value.chat.call_args.kwargs
+        prompt = call_kwargs["messages"][0]["content"]
+        assert "Available citation keys" in prompt
+
+    @patch("core.ollama_client.ollama.Client")
+    def test_none_citation_keys_omits_hint(self, MockClient):
+        MockClient.return_value.chat.return_value = _chat_mock(VALID_SECTION_JSON)
+        write_section(PLAN, SECTION, "ML", [], citation_keys=None)
+        call_kwargs = MockClient.return_value.chat.call_args.kwargs
+        prompt = call_kwargs["messages"][0]["content"]
+        assert "Available citation keys" not in prompt
+
+    @patch("core.ollama_client.ollama.Client")
+    def test_empty_citation_keys_list_omits_hint(self, MockClient):
+        MockClient.return_value.chat.return_value = _chat_mock(VALID_SECTION_JSON)
+        write_section(PLAN, SECTION, "ML", [], citation_keys=[])
+        call_kwargs = MockClient.return_value.chat.call_args.kwargs
+        prompt = call_kwargs["messages"][0]["content"]
+        assert "Available citation keys" not in prompt
+
+    @patch("core.ollama_client.ollama.Client")
+    def test_citation_keys_do_not_hallucinate_instruction_present(self, MockClient):
+        MockClient.return_value.chat.return_value = _chat_mock(VALID_SECTION_JSON)
+        write_section(PLAN, SECTION, "ML", [], citation_keys=["ref1"])
+        call_kwargs = MockClient.return_value.chat.call_args.kwargs
+        prompt = call_kwargs["messages"][0]["content"]
+        assert "NEVER" in prompt or "hallucinate" in prompt.lower()
+
+
+# ---------------------------------------------------------------------------
+# Block type Literal validation
+# ---------------------------------------------------------------------------
+
+class TestBlockTypeValidation:
+    def test_unknown_block_type_raises_on_parse(self):
+        raw = json.dumps({
+            "section_id": "s1", "title": "T", "level": 1,
+            "blocks": [{"type": "invented_custom_type", "text": "text"}],
+            "citations": [],
+        })
+        with pytest.raises(Exception):
+            _parse_content(raw)
+
+    def test_citation_placeholder_with_empty_key_raises(self):
+        raw = json.dumps({
+            "section_id": "s1", "title": "T", "level": 1,
+            "blocks": [{"type": "citation_placeholder", "key": ""}],
+            "citations": [],
+        })
+        with pytest.raises(Exception):
+            _parse_content(raw)
+
+    def test_citation_placeholder_with_whitespace_key_raises(self):
+        raw = json.dumps({
+            "section_id": "s1", "title": "T", "level": 1,
+            "blocks": [{"type": "citation_placeholder", "key": "   "}],
+            "citations": [],
+        })
+        with pytest.raises(Exception):
+            _parse_content(raw)
+
+    def test_citation_placeholder_with_valid_key_accepted(self):
+        raw = json.dumps({
+            "section_id": "s1", "title": "T", "level": 1,
+            "blocks": [{"type": "citation_placeholder", "key": "smith2020"}],
+            "citations": [],
+        })
+        result = _parse_content(raw)
+        assert result.blocks[0]["type"] == "citation_placeholder"
+        assert result.blocks[0]["key"] == "smith2020"
+
+    def test_all_valid_block_types_accepted(self):
+        blocks = [
+            {"type": "paragraph", "text": "text"},
+            {"type": "bullet_list", "items": ["a"]},
+            {"type": "bullets", "items": ["b"]},
+            {"type": "numbered_list", "items": ["c"]},
+            {"type": "table", "headers": ["h"], "rows": [["v"]]},
+            {"type": "heading", "text": "H", "level": 2},
+            {"type": "figure_placeholder", "caption": "fig"},
+            {"type": "citation_placeholder", "key": "ref1"},
+        ]
+        raw = json.dumps({
+            "section_id": "s1", "title": "T", "level": 1,
+            "blocks": blocks, "citations": [],
+        })
+        result = _parse_content(raw)
+        assert len(result.blocks) == 8
