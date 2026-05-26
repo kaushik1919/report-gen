@@ -103,14 +103,14 @@ class TestParsePlan:
 # ---------------------------------------------------------------------------
 
 class TestPlanRetry:
-    @patch("core.outline_planner.ollama.Client")
+    @patch("core.ollama_client.ollama.Client")
     def test_valid_first_attempt_returns_plan(self, MockClient):
         MockClient.return_value.chat.return_value = _chat_mock(VALID_PLAN_JSON)
         result = plan("a brief", "ML in Healthcare", "Undergraduate")
         assert isinstance(result, ReportPlan)
         assert MockClient.return_value.chat.call_count == 1
 
-    @patch("core.outline_planner.ollama.Client")
+    @patch("core.ollama_client.ollama.Client")
     def test_invalid_first_valid_second_returns_plan(self, MockClient):
         MockClient.return_value.chat.side_effect = [
             _chat_mock("not valid json {{{"),
@@ -120,20 +120,20 @@ class TestPlanRetry:
         assert isinstance(result, ReportPlan)
         assert MockClient.return_value.chat.call_count == 2
 
-    @patch("core.outline_planner.ollama.Client")
+    @patch("core.ollama_client.ollama.Client")
     def test_both_attempts_invalid_raises(self, MockClient):
         MockClient.return_value.chat.return_value = _chat_mock("{not json}")
         with pytest.raises(OutlinePlannerError, match="failed after retry"):
             plan("a brief", "ML", "Undergraduate")
         assert MockClient.return_value.chat.call_count == 2
 
-    @patch("core.outline_planner.ollama.Client")
+    @patch("core.ollama_client.ollama.Client")
     def test_ollama_connection_error_raises(self, MockClient):
         MockClient.return_value.chat.side_effect = ConnectionRefusedError("Ollama not running")
         with pytest.raises(OutlinePlannerError, match="Ollama request failed"):
             plan("brief", "topic", "PhD")
 
-    @patch("core.outline_planner.ollama.Client")
+    @patch("core.ollama_client.ollama.Client")
     def test_heading_hierarchy_passed_to_prompt(self, MockClient):
         MockClient.return_value.chat.return_value = _chat_mock(VALID_PLAN_JSON)
         plan("brief", "topic", "Postgraduate", heading_hierarchy=["Heading 1", "Heading 2"])

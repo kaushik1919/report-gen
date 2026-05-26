@@ -370,3 +370,43 @@ class TestExportPdf:
 
         _, kwargs = mock_pdf.call_args
         assert kwargs.get("libreoffice_bin") == "/opt/lo/soffice"
+
+
+# ---------------------------------------------------------------------------
+# GET /health/ollama
+# ---------------------------------------------------------------------------
+
+class TestHealthOllama:
+    def test_healthy_response_structure(self, client):
+        with patch("app.api.ollama_client.check_connectivity", return_value=True), \
+             patch("app.api.ollama_client.list_models", return_value=["llama3.1:8b"]), \
+             patch("app.api.ollama_detector.select_default_model", return_value="llama3.1:8b"):
+            resp = client.get("/health/ollama")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["server_reachable"] is True
+        assert body["selected_model"] == "llama3.1:8b"
+        assert "llama3.1:8b" in body["installed_models"]
+        assert "server_url" in body
+
+    def test_unreachable_server_returns_empty_models(self, client):
+        with patch("app.api.ollama_client.check_connectivity", return_value=False), \
+             patch("app.api.ollama_client.list_models", return_value=[]), \
+             patch("app.api.ollama_detector.select_default_model", return_value=None):
+            resp = client.get("/health/ollama")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["server_reachable"] is False
+        assert body["installed_models"] == []
+        assert body["selected_model"] is None
+
+    def test_no_installed_models_returns_none_selected(self, client):
+        with patch("app.api.ollama_client.check_connectivity", return_value=True), \
+             patch("app.api.ollama_client.list_models", return_value=[]), \
+             patch("app.api.ollama_detector.select_default_model", return_value=None):
+            resp = client.get("/health/ollama")
+
+        assert resp.status_code == 200
+        assert resp.json()["selected_model"] is None

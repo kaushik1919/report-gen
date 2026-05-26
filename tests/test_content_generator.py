@@ -182,14 +182,14 @@ class TestSummarizeSection:
 # ---------------------------------------------------------------------------
 
 class TestWriteSectionRetry:
-    @patch("core.content_generator.ollama.Client")
+    @patch("core.ollama_client.ollama.Client")
     def test_valid_first_attempt_returns_content(self, MockClient):
         MockClient.return_value.chat.return_value = _chat_mock(VALID_SECTION_JSON)
         result = write_section(PLAN, SECTION, "ML", [])
         assert isinstance(result, SectionContent)
         assert MockClient.return_value.chat.call_count == 1
 
-    @patch("core.content_generator.ollama.Client")
+    @patch("core.ollama_client.ollama.Client")
     def test_invalid_first_valid_second_returns_content(self, MockClient):
         MockClient.return_value.chat.side_effect = [
             _chat_mock("not json"),
@@ -199,14 +199,14 @@ class TestWriteSectionRetry:
         assert isinstance(result, SectionContent)
         assert MockClient.return_value.chat.call_count == 2
 
-    @patch("core.content_generator.ollama.Client")
+    @patch("core.ollama_client.ollama.Client")
     def test_both_attempts_fail_raises(self, MockClient):
         MockClient.return_value.chat.return_value = _chat_mock("{{{bad")
         with pytest.raises(ContentGeneratorError, match="failed after retry"):
             write_section(PLAN, SECTION, "ML", [])
         assert MockClient.return_value.chat.call_count == 2
 
-    @patch("core.content_generator.ollama.Client")
+    @patch("core.ollama_client.ollama.Client")
     def test_previous_summaries_in_prompt(self, MockClient):
         MockClient.return_value.chat.return_value = _chat_mock(VALID_SECTION_JSON)
         write_section(PLAN, SECTION, "ML", ["Summary of intro.", "Summary of background."])
@@ -214,7 +214,7 @@ class TestWriteSectionRetry:
         prompt = call_kwargs["messages"][0]["content"]
         assert "Summary of intro." in prompt
 
-    @patch("core.content_generator.ollama.Client")
+    @patch("core.ollama_client.ollama.Client")
     def test_only_last_three_summaries_used(self, MockClient):
         MockClient.return_value.chat.return_value = _chat_mock(VALID_SECTION_JSON)
         summaries = ["S1", "S2", "S3", "S4", "S5"]
@@ -227,7 +227,7 @@ class TestWriteSectionRetry:
         assert "S4" in prompt
         assert "S5" in prompt
 
-    @patch("core.content_generator.ollama.Client")
+    @patch("core.ollama_client.ollama.Client")
     def test_no_summaries_omits_context_hint(self, MockClient):
         MockClient.return_value.chat.return_value = _chat_mock(VALID_SECTION_JSON)
         write_section(PLAN, SECTION, "ML", [])
