@@ -1,6 +1,7 @@
 import dataclasses
 import logging
 import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
@@ -10,10 +11,12 @@ from pydantic import BaseModel
 import core.content_generator as content_generator
 import core.document_assembler as document_assembler
 import core.exporter as exporter
+import core.ollama_client as ollama_client
+import core.ollama_detector as ollama_detector
 import core.outline_planner as outline_planner
 import core.style_extractor as style_extractor
 import core.template_loader as template_loader
-from app.config import DEFAULT_MODEL, OUTPUTS_DIR, UPLOADS_DIR
+from app.config import DEFAULT_MODEL, OLLAMA_BASE_URL, OUTPUTS_DIR, UPLOADS_DIR
 from core.content_generator import ContentGeneratorError
 from core.exporter import ExporterError
 from core.models import ReportPlan, SectionContent, SectionSpec
@@ -22,7 +25,13 @@ from core.template_loader import TemplateLoadError
 
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Report Generator API", version="0.3")
+@asynccontextmanager
+async def _lifespan(application: FastAPI):
+    ollama_detector.startup_diagnostics()
+    yield
+
+
+app = FastAPI(title="Report Generator API", version="0.3", lifespan=_lifespan)
 
 
 # ---------------------------------------------------------------------------
@@ -188,6 +197,20 @@ def build_report(req: BuildRequest):
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         filename=out_path.name,
     )
+
+
+@app.get("/health/ollama")
+def health_ollama():
+    """Return Ollama server status, installed models, and selected model."""
+    reachable = ollama_client.check_connectivity()
+    installed = ollama_client.list_models() if reachable else []
+    selected = ollama_detector.select_default_model(installed)
+    return {
+        "server_reachable": reachable,
+        "installed_models": installed,
+        "selected_model": selected,
+        "server_url": OLLAMA_BASE_URL,
+    }
 
 
 @app.post("/report/export-pdf")
