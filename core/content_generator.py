@@ -1,8 +1,10 @@
+from __future__ import annotations
+
 import json
 import logging
 from pathlib import Path
 from string import Template
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, ValidationError, model_validator
 
@@ -10,6 +12,9 @@ import core.ollama_client as ollama_client
 from app.config import DEFAULT_MODEL
 from core.models import ReportPlan, SectionContent, SectionSpec
 from core.ollama_client import OllamaClientError
+
+if TYPE_CHECKING:
+    from core.rag_store import RAGStore
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +44,7 @@ class _BlockModel(BaseModel):
     key: str | None = None
 
     @model_validator(mode="after")
-    def _validate_citation_key(self) -> "_BlockModel":
+    def _validate_citation_key(self) -> _BlockModel:
         if self.type == "citation_placeholder" and not (self.key or "").strip():
             raise ValueError("citation_placeholder block must have a non-empty 'key'")
         return self
@@ -64,9 +69,10 @@ def write_section(
     previous_summaries: list[str],
     model: str = DEFAULT_MODEL,
     citation_keys: list[str] | None = None,
+    rag_store: RAGStore | None = None,
 ) -> SectionContent:
     """Generate structured JSON content for one section via Ollama."""
-    prompt = _build_prompt(section, topic, previous_summaries, citation_keys)
+    prompt = _build_prompt(section, topic, previous_summaries, citation_keys, rag_store)
     raw = _call_llm(prompt, model)
     try:
         content = _parse_content(raw)
@@ -109,6 +115,7 @@ def _build_prompt(
     topic: str,
     previous_summaries: list[str],
     citation_keys: list[str] | None = None,
+    rag_store: RAGStore | None = None,
 ) -> str:
     template_text = (_PROMPTS_DIR / "section_prompt.txt").read_text(encoding="utf-8")
     context_hint = ""
@@ -132,6 +139,8 @@ def _build_prompt(
             "- Prefer block types: paragraph, bullet_list, table"
         )
 
+    reference_material = _build_reference_material(section, rag_store)
+
     return Template(template_text).safe_substitute(
         topic=topic,
         title=section.title,
@@ -142,7 +151,26 @@ def _build_prompt(
         context_hint=context_hint,
         citation_keys_hint=citation_keys_hint,
         citation_rules_hint=citation_rules_hint,
+        reference_material=reference_material,
     )
+
+
+def _build_reference_material(section: SectionSpec, rag_store: RAGStore | None) -> str:
+    """Retrieve top-k passages and format as a prompt block; empty string if RAG disabled."""
+    if rag_store is None:
+        return ""
+    try:
+        result = rag_store.retrieve(section.title, k=5)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("content_generator: RAG retrieval failed for %r: %s", section.title, exc)
+        return ""
+    if not result.chunks:
+        return ""
+    lines = ["Reference Material (use as supporting evidence, do not copy verbatim):"]
+    for i, chunk in enumerate(result.chunks, 1):
+        src = f"{chunk.source} p.{chunk.page + 1}"
+        lines.append(f"[{i}] ({src}) {chunk.text[:400]}")
+    return "\n".join(lines)
 
 
 def _warn_invalid_citation_keys(content: SectionContent, valid_keys: list[str]) -> None:

@@ -525,3 +525,131 @@ class TestGenerateContentCitationKeys:
             })
         _, kwargs = mock_ws.call_args
         assert kwargs.get("citation_keys") is None
+
+
+# ---------------------------------------------------------------------------
+# POST /rag/ingest
+# ---------------------------------------------------------------------------
+
+class TestRagIngest:
+    def _ingest_result(self, **kwargs) -> dict:
+        defaults = {
+            "source": "paper.pdf",
+            "file_hash": "a" * 64,
+            "chunks_added": 3,
+            "skipped": False,
+        }
+        defaults.update(kwargs)
+        return defaults
+
+    def test_happy_path_returns_ingest_result(self, client):
+        with patch("app.api.rag_store_module.get_store") as mock_get:
+            mock_store = MagicMock()
+            mock_store.ingest.return_value = self._ingest_result()
+            mock_get.return_value = mock_store
+            resp = client.post(
+                "/rag/ingest",
+                files={"file": ("paper.pdf", b"%PDF-1.4 fake content", "application/pdf")},
+            )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["chunks_added"] == 3
+        assert body["skipped"] is False
+
+    def test_non_pdf_rejected_with_400(self, client):
+        resp = client.post(
+            "/rag/ingest",
+            files={"file": ("paper.docx", b"not a pdf", "application/octet-stream")},
+        )
+        assert resp.status_code == 400
+        assert ".pdf" in resp.json()["detail"].lower()
+
+    def test_empty_file_rejected_with_400(self, client):
+        resp = client.post(
+            "/rag/ingest",
+            files={"file": ("paper.pdf", b"", "application/pdf")},
+        )
+        assert resp.status_code == 400
+
+    def test_duplicate_ingest_returns_skipped_true(self, client):
+        with patch("app.api.rag_store_module.get_store") as mock_get:
+            mock_store = MagicMock()
+            mock_store.ingest.return_value = self._ingest_result(chunks_added=0, skipped=True)
+            mock_get.return_value = mock_store
+            resp = client.post(
+                "/rag/ingest",
+                files={"file": ("paper.pdf", b"%PDF-1.4 already indexed", "application/pdf")},
+            )
+        assert resp.status_code == 200
+        assert resp.json()["skipped"] is True
+        assert resp.json()["chunks_added"] == 0
+
+    def test_citation_key_passed_to_store(self, client):
+        with patch("app.api.rag_store_module.get_store") as mock_get:
+            mock_store = MagicMock()
+            mock_store.ingest.return_value = self._ingest_result()
+            mock_get.return_value = mock_store
+            client.post(
+                "/rag/ingest?citation_key=smith2020",
+                files={"file": ("paper.pdf", b"%PDF-1.4 content", "application/pdf")},
+            )
+        _, kwargs = mock_store.ingest.call_args
+        assert kwargs.get("citation_key") == "smith2020"
+
+
+# ---------------------------------------------------------------------------
+# POST /rag/retrieve
+# ---------------------------------------------------------------------------
+
+class TestRagRetrieve:
+    def test_happy_path_returns_chunks(self, client):
+        from core.models import RAGChunk, RetrievalResult
+        chunks = (
+            RAGChunk(
+                chunk_id="abc123_000000",
+                text="Machine learning enables pattern recognition.",
+                source="paper.pdf",
+                page=0,
+                chunk_index=0,
+                file_hash="a" * 64,
+                citation_key="",
+            ),
+        )
+        result = RetrievalResult(chunks=chunks, query="machine learning", k=5)
+        with patch("app.api.rag_store_module.get_store") as mock_get:
+            mock_store = MagicMock()
+            mock_store.retrieve.return_value = result
+            mock_get.return_value = mock_store
+            resp = client.post("/rag/retrieve", json={"query": "machine learning", "k": 5})
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["query"] == "machine learning"
+        assert len(body["chunks"]) == 1
+        assert body["chunks"][0]["source"] == "paper.pdf"
+
+    def test_empty_query_rejected_with_400(self, client):
+        resp = client.post("/rag/retrieve", json={"query": "   ", "k": 5})
+        assert resp.status_code == 400
+
+    def test_empty_store_returns_empty_chunks(self, client):
+        from core.models import RetrievalResult
+        empty = RetrievalResult(chunks=(), query="test", k=5)
+        with patch("app.api.rag_store_module.get_store") as mock_get:
+            mock_store = MagicMock()
+            mock_store.retrieve.return_value = empty
+            mock_get.return_value = mock_store
+            resp = client.post("/rag/retrieve", json={"query": "test", "k": 5})
+        assert resp.status_code == 200
+        assert resp.json()["chunks"] == []
+
+    def test_k_defaults_to_5(self, client):
+        from core.models import RetrievalResult
+        empty = RetrievalResult(chunks=(), query="x", k=5)
+        with patch("app.api.rag_store_module.get_store") as mock_get:
+            mock_store = MagicMock()
+            mock_store.retrieve.return_value = empty
+            mock_get.return_value = mock_store
+            client.post("/rag/retrieve", json={"query": "x"})
+        _, kwargs = mock_store.retrieve.call_args
+        assert kwargs.get("k", 5) == 5

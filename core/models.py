@@ -111,6 +111,34 @@ class BibliographyStore:
         return key in self.entries
 
 
+# ---------------------------------------------------------------------------
+# RAG
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class RAGChunk:
+    """
+    One text chunk extracted from an ingested PDF.
+
+    chunk_id is deterministic: f"{file_hash[:16]}_{chunk_index:06d}"
+    """
+    chunk_id: str
+    text: str
+    source: str          # original filename
+    page: int            # 0-based page index of first char in chunk
+    chunk_index: int     # sequential index within the source document
+    file_hash: str       # SHA-256 hex of the source PDF bytes
+    citation_key: str = ""  # optional; links chunk to a BibTeX entry
+
+
+@dataclass(frozen=True)
+class RetrievalResult:
+    """Top-k chunks returned by RAGStore.retrieve(), with distance scores."""
+    chunks: tuple[RAGChunk, ...]
+    query: str
+    k: int
+
+
 @dataclass
 class SectionContent:
     """

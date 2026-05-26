@@ -39,3 +39,10 @@ DEFAULT_TEMPERATURE: float = float(os.environ.get("OLLAMA_TEMPERATURE", "0.4"))
 # ---------------------------------------------------------------------------
 
 MAX_UPLOAD_MB: int = 20
+
+# ---------------------------------------------------------------------------
+# RAG / embedding settings
+# ---------------------------------------------------------------------------
+
+# Local sentence-transformers model used for document embeddings.
+EMBEDDING_MODEL: str = os.environ.get("EMBEDDING_MODEL", "all-MiniLM-L6-v2")

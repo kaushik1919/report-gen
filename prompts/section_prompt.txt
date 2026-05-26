@@ -7,6 +7,7 @@ Target Word Count: $target_words
 Instructions: $instructions
 $context_hint
 $citation_keys_hint
+$reference_material
 
 Return ONLY a JSON object matching this schema exactly. No markdown. No prose.
 

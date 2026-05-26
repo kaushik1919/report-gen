@@ -15,6 +15,7 @@ import core.exporter as exporter
 import core.ollama_client as ollama_client
 import core.ollama_detector as ollama_detector
 import core.outline_planner as outline_planner
+import core.rag_store as rag_store_module
 import core.style_extractor as style_extractor
 import core.template_loader as template_loader
 from app.config import DEFAULT_MODEL, OLLAMA_BASE_URL, OUTPUTS_DIR, UPLOADS_DIR
@@ -23,6 +24,7 @@ from core.content_generator import ContentGeneratorError
 from core.exporter import ExporterError
 from core.models import ReportPlan, SectionContent, SectionSpec
 from core.outline_planner import OutlinePlannerError
+from core.rag_store import rag_startup_info
 from core.template_loader import TemplateLoadError
 
 logger = logging.getLogger(__name__)
@@ -30,6 +32,13 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def _lifespan(application: FastAPI):
     ollama_detector.startup_diagnostics()
+    info = rag_startup_info()
+    logger.info(
+        "rag: chroma_dir=%s embedding_model=%s collection=%s",
+        info["chroma_dir"],
+        info["embedding_model"],
+        info["collection"],
+    )
     yield
 
 
@@ -224,6 +233,66 @@ async def load_bibliography(file: UploadFile = File(...)):
         "citation_keys": store.keys(),
         "entry_count": len(store.entries),
         "source": file.filename or "",
+    }
+
+
+class RetrieveRequest(BaseModel):
+    query: str
+    k: int = 5
+
+
+@app.post("/rag/ingest")
+async def ingest_pdf(
+    file: UploadFile = File(...),
+    citation_key: str = "",
+):
+    """Ingest a PDF into the RAG store.  Re-ingesting the same file is a no-op."""
+    if not (file.filename or "").lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Only .pdf files are accepted")
+
+    pdf_bytes = await file.read()
+    if len(pdf_bytes) == 0:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty")
+
+    try:
+        result = rag_store_module.get_store().ingest(
+            pdf_bytes=pdf_bytes,
+            source=file.filename or "unknown.pdf",
+            citation_key=citation_key,
+        )
+    except Exception as exc:
+        logger.exception("rag/ingest: unexpected error")
+        raise HTTPException(status_code=500, detail=f"Ingestion failed: {exc}") from exc
+
+    return result
+
+
+@app.post("/rag/retrieve")
+def retrieve_chunks(req: RetrieveRequest):
+    """Return the top-k chunks most relevant to a query string."""
+    if not req.query.strip():
+        raise HTTPException(status_code=400, detail="query must not be empty")
+
+    try:
+        result = rag_store_module.get_store().retrieve(query=req.query, k=req.k)
+    except Exception as exc:
+        logger.exception("rag/retrieve: unexpected error")
+        raise HTTPException(status_code=500, detail=f"Retrieval failed: {exc}") from exc
+
+    return {
+        "query": result.query,
+        "k": result.k,
+        "chunks": [
+            {
+                "chunk_id": c.chunk_id,
+                "text": c.text,
+                "source": c.source,
+                "page": c.page,
+                "chunk_index": c.chunk_index,
+                "citation_key": c.citation_key,
+            }
+            for c in result.chunks
+        ],
     }
 
 
