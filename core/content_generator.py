@@ -3,11 +3,12 @@ import logging
 from pathlib import Path
 from string import Template
 
-import ollama
 from pydantic import BaseModel, ValidationError
 
-from app.config import DEFAULT_MODEL, OLLAMA_BASE_URL
+import core.ollama_client as ollama_client
+from app.config import DEFAULT_MODEL
 from core.models import ReportPlan, SectionContent, SectionSpec
+from core.ollama_client import OllamaClientError
 
 logger = logging.getLogger(__name__)
 
@@ -103,15 +104,13 @@ def _build_prompt(
 
 def _call_llm(prompt: str, model: str) -> str:
     try:
-        client = ollama.Client(host=OLLAMA_BASE_URL)
-        response = client.chat(
+        return ollama_client.generate(
+            prompt,
             model=model,
-            messages=[{"role": "user", "content": prompt}],
-            format="json",
-            options={"temperature": 0.4},
+            temperature=0.4,
+            prompt_type="section",
         )
-        return response.message.content
-    except Exception as exc:
+    except OllamaClientError as exc:
         raise ContentGeneratorError(f"Ollama request failed: {exc}") from exc
 
 
